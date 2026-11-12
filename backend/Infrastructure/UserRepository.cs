@@ -1,8 +1,13 @@
 // Provide reusable real Mongo operations without defining domain endpoints.
+using System.Text.RegularExpressions;
+using UserManagement.Api;
+using UserManagement.Application;
+using UserManagement.Security;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using UserManagement.Domain;
 namespace UserManagement.Infrastructure;
+// Reuse the pooled collection for validated persistence and server-side directory projection.
 public sealed class UserRepository(MongoStore store)
 {
     // Read an exact-case unique username for authentication.
@@ -23,6 +28,49 @@ public sealed class UserRepository(MongoStore store)
     {
         if (limit is < 1 or > 100 || skip < 0) throw new ArgumentOutOfRangeException(nameof(limit));
         return store.Users.Find(filter).Sort(sort).Skip(skip).Limit(limit).ToListAsync(ct);
+    }
+    // Create repeatable indexes for exact filters and four stable sorts without deleting existing data.
+    // Notes: Unanchored case-insensitive literal search may scan; no performance SLO is promised.
+    public Task EnsureDirectoryIndexesAsync(CancellationToken ct)
+    {
+        var keys = Builders<UserRecord>.IndexKeys;
+        var indexes = new List<CreateIndexModel<UserRecord>> {
+            new(keys.Ascending(x => x.AadhaarIndex), new CreateIndexOptions { Name = "directory_aadhaar_v1" }),
+            new(keys.Ascending(x => x.PanIndex), new CreateIndexOptions { Name = "directory_pan_v1" }),
+            new(keys.Ascending(x => x.IsActive).Ascending(x => x.Id), new CreateIndexOptions { Name = "directory_status_v1" }) };
+        foreach (var field in new[] { "username", "city", "country", "education" })
+            indexes.Add(new(keys.Ascending(field).Ascending(x => x.Id), new CreateIndexOptions { Name = "directory_" + field + "_v1" }));
+        return store.Users.Indexes.CreateManyAsync(indexes, cancellationToken: ct);
+    }
+    // Construct operators only from an immutable validated query and field-specific HMAC values.
+    // Returns: A server-side filter; regex syntax in ordinary search remains escaped literal text.
+    public FilterDefinition<UserRecord> DirectoryFilter(UserQuery query, IdentifierProtector protector)
+    {
+        var f = Builders<UserRecord>.Filter;
+        var filter = f.Empty;
+        if (query.Search is { } search)
+        {
+            var literal = new BsonRegularExpression(Regex.Escape(search), "i");
+            filter &= f.Or(f.Regex(x => x.Username, literal), f.Regex(x => x.City, literal),
+                f.Eq(x => x.AadhaarIndex, protector.BlindIndex("aadhaar_no", search)), f.Eq(x => x.PanIndex, protector.BlindIndex("pan_no", search)));
+        }
+        if (query.Country is { } country) filter &= f.Eq(x => x.Country, country);
+        if (query.Education is { } education) filter &= f.Eq(x => x.Education, education);
+        if (query.Active is { } active) filter &= f.Eq(x => x.IsActive, active);
+        return filter;
+    }
+    // Order by an allowlisted field and ObjectId in the same direction for stable offset pages.
+    public SortDefinition<UserRecord> DirectorySort(UserQuery query) => query.Descending
+        ? Builders<UserRecord>.Sort.Descending(query.SortBy).Descending(x => x.Id)
+        : Builders<UserRecord>.Sort.Ascending(query.SortBy).Ascending(x => x.Id);
+    // Project only public fields in Mongo before materializing a bounded result.
+    // Notes: Neither ciphertext, blind indexes nor credentials are fetched or decrypted.
+    public async Task<List<UserView>> ListDirectoryAsync(UserQuery query, IdentifierProtector protector, CancellationToken ct)
+    {
+        var projection = Builders<UserRecord>.Projection.Expression(x => new UserView(x.Id.ToString(), x.Username,
+            x.Address, x.City, x.Country, x.Education, x.IsActive, x.CreatedAt, x.UpdatedAt));
+        return await store.Users.Find(DirectoryFilter(query, protector)).Sort(DirectorySort(query))
+            .Skip(query.Skip).Limit(query.Limit).Project(projection).ToListAsync(ct);
     }
     // Upsert operator-owned seed data without modifying existing credentials or role.
     public Task<UpdateResult> SeedAsync(UserRecord record, CancellationToken ct) => store.Users.UpdateOneAsync(

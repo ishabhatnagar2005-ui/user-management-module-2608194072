@@ -1,9 +1,9 @@
 /** Transport only typed safe account contracts through the configured API. */
 import { Injectable } from '@angular/core';
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { CreateUserRequest, UserView } from '../core/api.models';
+import { CreateUserRequest, UserView, DirectoryPage, DirectoryQuery } from '../core/api.models';
 /** Delegate authorization to the existing interceptor and authoritative backend. */
 @Injectable({ providedIn: 'root' })
 export class UserApiService {
@@ -11,6 +11,12 @@ export class UserApiService {
   constructor(private readonly http: HttpClient) {}
   /** Create an account only when an explicit form submission calls this method. */
   create(request: CreateUserRequest): Observable<UserView> { return this.http.post<UserView>(`${environment.apiBaseUrl}/users`, request); }
+  /** Serialize each approved directory value once, omitting empty optional filters. */
+  list(query: DirectoryQuery): Observable<DirectoryPage> {
+    let params = new HttpParams();
+    for (const [key, value] of Object.entries(query)) if (value !== '') params = params.set(key, String(value));
+    return this.http.get<DirectoryPage>(`${environment.apiBaseUrl}/users`, { params });
+  }
   /** Fetch one safe record; encode route data so it cannot introduce extra path segments. */
   read(id: string): Observable<UserView> { return this.http.get<UserView>(`${environment.apiBaseUrl}/users/${encodeURIComponent(id)}`); }
 }

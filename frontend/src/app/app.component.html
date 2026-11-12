@@ -5,6 +5,7 @@
     <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{exact: true}" ariaCurrentWhenActive="page">Home</a>
     @if (auth.signedIn()) {
       @if (auth.role() === 'Admin') {
+        <a routerLink="/users" routerLinkActive="active" [routerLinkActiveOptions]="{exact: true}" ariaCurrentWhenActive="page">Directory</a>
         <a routerLink="/users/new" routerLinkActive="active" ariaCurrentWhenActive="page">New account</a>
       }
       <button class="button ghost" type="button" (click)="auth.logout()">Sign out</button>

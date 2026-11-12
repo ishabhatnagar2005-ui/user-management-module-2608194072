@@ -25,6 +25,7 @@ builder.Services.AddSingleton<DevelopmentSeed>();
 builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
 builder.Services.AddSingleton<UserValidator>();
 builder.Services.AddScoped<UserService>();
+builder.Services.AddScoped<DirectoryService>();
 builder.Services.AddControllers().AddJsonOptions(o => o.JsonSerializerOptions.UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow);
 builder.Services.Configure<ApiBehaviorOptions>(o => o.InvalidModelStateResponseFactory = context =>
     new BadRequestObjectResult(new ApiError("validation_error", "Request validation failed", 400,
@@ -60,11 +61,13 @@ var app = builder.Build();
 app.UseMiddleware<ErrorMiddleware>();
 app.UseCors("client");
 app.UseMiddleware<AccountFailureAuditMiddleware>();
+app.UseMiddleware<DirectoryFailureAuditMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 // Migrate and seed without accepting an unavailable dependency as successful startup.
 await app.Services.GetRequiredService<IndexMigration>().ApplyAsync(CancellationToken.None);
+await app.Services.GetRequiredService<UserRepository>().EnsureDirectoryIndexesAsync(CancellationToken.None);
 await app.Services.GetRequiredService<DevelopmentSeed>().ApplyAsync(CancellationToken.None);
 app.Run();
 // Expose the application entry point to the real HTTP test host.

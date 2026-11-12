@@ -28,6 +28,7 @@ import { UserApiService, accountError } from './user-api.service';
       </dl>
       <p class="help">Passwords and protected identifiers are never displayed.</p>
     }
+    <p><a routerLink="/users">Browse directory</a></p>
     <a routerLink="/users/new">New account</a>
     <p><a routerLink="/">Return home</a></p>
   </section>` })

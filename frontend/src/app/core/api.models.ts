@@ -10,3 +10,11 @@ export interface CreateUserRequest {
   username: string; password: string; address?: string | null; city?: string | null;
   country?: string | null; education?: string | null; aadhaar_no?: string | null; pan_no?: string | null;
 }
+
+/** Preserve the approved directory URL/HTTP state without total-count assumptions. */
+export interface DirectoryQuery {
+  limit: number; skip: number; search: string; country: string; education: string;
+  status: '' | 'active' | 'inactive'; sortBy: 'username' | 'city' | 'country' | 'education'; sortDirection: 'asc' | 'desc';
+}
+/** Return only safe records and the requested offset window. */
+export interface DirectoryPage { items: UserView[]; limit: number; skip: number; }
