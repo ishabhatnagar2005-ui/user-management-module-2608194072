@@ -10,5 +10,7 @@ export const routes: Routes = [
   { path: 'users/:id/edit', title: 'Edit account · User management', canActivate: [adminGuard], loadComponent: () => import('./users/user-form.component').then(m => m.UserFormComponent) },
   { path: 'users/:id', title: 'Account details · User management', canActivate: [adminGuard], loadComponent: () => import('./users/user-detail.component').then(m => m.UserDetailComponent) },
   { path: 'profile', title: 'My profile · User management', canActivate: [authGuard], loadComponent: () => import('./profile/profile.component').then(m => m.ProfileComponent) },
+  { path: 'logs', title: 'Audit logs · User management', canActivate: [adminGuard], loadComponent: () => import('./activity/audit.component').then(m => m.AuditComponent) },
+  { path: 'dashboard', title: 'Dashboard · User management', canActivate: [adminGuard], loadComponent: () => import('./activity/dashboard.component').then(m => m.DashboardComponent) },
   { path: '**', redirectTo: '' }
 ];

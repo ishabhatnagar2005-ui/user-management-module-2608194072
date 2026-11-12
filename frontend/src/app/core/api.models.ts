@@ -26,3 +26,16 @@ export type UpdateUserRequest = Partial<Omit<CreateUserRequest, 'password'>>;
 export type ProfileUpdateRequest = Pick<UserView, 'address' | 'city' | 'country' | 'education'>;
 /** Carry secrets only in the explicit password change request. */
 export interface PasswordChangeRequest { currentPassword: string; newPassword: string; }
+
+/** Restrict audit display to approved source outcomes with no personal content. */
+export type AuditAction = 'login' | 'user.create' | 'user.read' | 'user.list' | 'user.update' | 'user.deactivate' | 'profile.update' | 'password.change';
+/** Omit unavailable actor identity; never substitute a username or invented identity. */
+export interface AuditView { id: string; user_id?: string; action: AuditAction; status: 'success' | 'failure'; timestamp: string; }
+/** Carry the fixed bounded read without query controls. */
+export interface AuditPage { items: AuditView[]; }
+/** Count populated source country labels only. */
+export interface CountryCount { country: string; count: number; }
+/** Group only recorded approved action outcomes. */
+export interface AuditActivity { action: AuditAction; success: number; failure: number; }
+/** Represent the six source-backed dashboard summaries. */
+export interface DashboardView { total: number; active: number; inactive: number; recentLogins: AuditView[]; countryDistribution: CountryCount[]; auditSummary: AuditActivity[]; }

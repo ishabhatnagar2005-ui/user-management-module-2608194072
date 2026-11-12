@@ -10,6 +10,21 @@ namespace UserManagement.Infrastructure;
 // Reuse the pooled collection for validated persistence and server-side directory projection.
 public sealed class UserRepository(MongoStore store)
 {
+    // Aggregate statuses and populated countries in one facet within the caller's snapshot.
+    // Notes: Missing or non-boolean status stays in total, forcing reconciliation failure rather than invented classification.
+    public Task<BsonDocument> ActivityCountsAsync(IClientSessionHandle session, CancellationToken ct)
+    {
+        BsonDocument[] pipeline = [BsonDocument.Parse("""
+            { "$facet": {
+              "counts": [{ "$group": { "_id": null, "total": { "$sum": 1 },
+                "active": { "$sum": { "$cond": [{ "$and": [{ "$eq": [{ "$type": "$is_active" }, "bool"] }, { "$eq": ["$is_active", true] }] }, 1, 0] } },
+                "inactive": { "$sum": { "$cond": [{ "$and": [{ "$eq": [{ "$type": "$is_active" }, "bool"] }, { "$eq": ["$is_active", false] }] }, 1, 0] } } } }],
+              "countries": [{ "$match": { "$expr": { "$eq": [{ "$type": "$country" }, "string"] }, "country": { "$regex": "\\S" } } },
+                { "$group": { "_id": "$country", "count": { "$sum": 1 } } }, { "$sort": { "_id": 1 } }]
+            } }
+            """)];
+        return store.Database.GetCollection<BsonDocument>("users").Aggregate<BsonDocument>(session, pipeline).SingleAsync(ct);
+    }
     // Read an exact-case unique username for authentication.
     public Task<UserRecord?> FindByUsernameAsync(string username, CancellationToken ct) => FindAsync(Builders<UserRecord>.Filter.Eq(x => x.Username, username), null, ct);
     // Read an identity with optional transaction context.
