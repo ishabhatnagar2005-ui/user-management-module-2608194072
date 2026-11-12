@@ -29,11 +29,24 @@ test('Admin organizes the real directory and preserves query state through histo
   await page.goto('/');
   await page.getByRole('main').getByRole('link', { name: 'Sign in', exact: true }).click(); await signIn(page, 'Admin');
   const initial = collection(); await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Directory', exact: true }).click();
+  await assertPage(await initial);
+  await page.getByRole('main').getByRole('link', { name: 'New account', exact: true }).click();
+  await expect(page).toHaveURL('/users/new');
+  await expect(page.getByRole('main').getByRole('heading', { name: 'New account', exact: true })).toBeVisible();
+  await expect(page.getByRole('main').locator('form')).toBeVisible();
+  await expect(page.getByLabel('Username', { exact: true })).toBeEditable();
+  await expect(page.getByLabel('Password', { exact: true })).toBeEditable();
+  await expect(page.getByRole('button', { name: 'Create account', exact: true })).toBeEnabled();
+  await page.getByRole('main').getByRole('link', { name: 'Cancel and return home', exact: true }).click();
+  await expect(page).toHaveURL('/');
+  const returned = collection();
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Directory', exact: true }).click();
+  await assertPage(await returned);
+  await expect(page).toHaveURL('/users');
   // Slow the actual network without replacing any response so transient loading is observable.
   const session = await page.context().newCDPSession(page);
   await session.send('Network.enable');
   await session.send('Network.emulateNetworkConditions', { offline: false, latency: 250, downloadThroughput: -1, uploadThroughput: -1 });
-  await assertPage(await initial);
   await page.getByLabel('Search', { exact: true }).fill(marker);
   await page.getByLabel('Country', { exact: true }).fill(marker); await page.getByLabel('Education', { exact: true }).fill(marker);
   await page.getByLabel('Status', { exact: true }).selectOption('active'); await page.getByLabel('Sort by', { exact: true }).selectOption('username');

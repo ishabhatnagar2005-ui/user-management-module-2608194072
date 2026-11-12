@@ -5,9 +5,12 @@ import path from 'node:path';
 export interface DevelopmentConfig { Seed: { UserUsername: string; UserPassword: string; AdminUsername: string; AdminPassword: string }; }
 /** Read synthetic seed configuration without logging credentials or copying them into source. */
 export function credentials(role: 'User' | 'Admin' = 'User'): { username: string; password: string } {
-  const username = process.env['E2E_USERNAME']; const password = process.env['E2E_PASSWORD'];
-  if (username && password) return { username, password };
-  if (username || password) throw new Error('Supply both E2E_USERNAME and E2E_PASSWORD.');
+  const prefix = role === 'Admin' ? 'E2E_ADMIN' : 'E2E_USER';
+  const username = process.env[`${prefix}_USERNAME`]; const password = process.env[`${prefix}_PASSWORD`];
+  if (username !== undefined || password !== undefined) {
+    if (!username || !password) throw new Error(`Supply both ${prefix}_USERNAME and ${prefix}_PASSWORD with non-empty values.`);
+    return { username, password };
+  }
   const config = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../backend/appsettings.Development.json'), 'utf8')) as DevelopmentConfig;
   return { username: role === 'Admin' ? config.Seed.AdminUsername : config.Seed.UserUsername, password: role === 'Admin' ? config.Seed.AdminPassword : config.Seed.UserPassword };
 }

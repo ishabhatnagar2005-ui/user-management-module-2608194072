@@ -1,6 +1,7 @@
 // Exercise authentication services and security primitives against isolated real Mongo state.
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Cryptography;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -102,6 +103,148 @@ public sealed class AuthenticationTests
         Assert.Single(results, x => x); Assert.Equal(1, await store.Users.CountDocumentsAsync(x => x.Username == "race.user"));
         await app.Service<UserRepository>().InsertAsync(new() { Username = "Race.user", PasswordHash = before.PasswordHash }, default);
         Assert.Equal(1, await store.Users.CountDocumentsAsync(x => x.Username == "Race.user"));
+    }
+    [Theory]
+    [InlineData("Testing")]
+    [InlineData("Production")]
+    public async Task Disabled_seed_preserves_database_even_with_invalid_credentials(string environmentName)
+    {
+        await using var app = new TestApplication();
+        var store = app.Service<MongoStore>();
+        var beforeUsers = await CollectionSnapshotAsync(store, "users");
+        var beforeLogs = await CollectionSnapshotAsync(store, "logs");
+        var settings = new Dictionary<string, string?>(app.Settings)
+        {
+            ["Seed:Enabled"] = "false", ["Seed:AdminUsername"] = null,
+            ["Seed:AdminPassword"] = null, ["Seed:UserUsername"] = null,
+            ["Seed:UserPassword"] = null
+        };
+        var environment = app.Service<IWebHostEnvironment>();
+        environment.EnvironmentName = environmentName;
+        var seed = new DevelopmentSeed(new ConfigurationBuilder().AddInMemoryCollection(settings).Build(),
+            environment, app.Service<UserRepository>(), app.Service<PasswordHasher>());
+
+        await seed.ApplyAsync(default);
+
+        Assert.Equal(beforeUsers, await CollectionSnapshotAsync(store, "users"));
+        Assert.Equal(beforeLogs, await CollectionSnapshotAsync(store, "logs"));
+    }
+    [Fact]
+    public async Task Enabled_production_seed_refuses_valid_credentials_without_database_changes()
+    {
+        await using var app = new TestApplication();
+        var store = app.Service<MongoStore>();
+        var beforeUsers = await CollectionSnapshotAsync(store, "users");
+        var beforeLogs = await CollectionSnapshotAsync(store, "logs");
+        var settings = new Dictionary<string, string?>(app.Settings)
+        {
+            ["Seed:AdminUsername"] = "new.admin", ["Seed:UserUsername"] = "new.user"
+        };
+        var environment = app.Service<IWebHostEnvironment>();
+        environment.EnvironmentName = "Production";
+        var seed = new DevelopmentSeed(new ConfigurationBuilder().AddInMemoryCollection(settings).Build(),
+            environment, app.Service<UserRepository>(), app.Service<PasswordHasher>());
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => seed.ApplyAsync(default));
+
+        Assert.Equal("Seed__Enabled is forbidden in production.", error.Message);
+        Assert.Equal(beforeUsers, await CollectionSnapshotAsync(store, "users"));
+        Assert.Equal(beforeLogs, await CollectionSnapshotAsync(store, "logs"));
+    }
+    [Fact]
+    public async Task Duplicate_seed_usernames_are_rejected_without_database_changes()
+    {
+        await using var app = new TestApplication();
+        var store = app.Service<MongoStore>();
+        var beforeUsers = await CollectionSnapshotAsync(store, "users");
+        var beforeLogs = await CollectionSnapshotAsync(store, "logs");
+        var settings = new Dictionary<string, string?>(app.Settings)
+        {
+            ["Seed:AdminUsername"] = "new.shared", ["Seed:UserUsername"] = "new.shared"
+        };
+        var seed = new DevelopmentSeed(new ConfigurationBuilder().AddInMemoryCollection(settings).Build(),
+            app.Service<IWebHostEnvironment>(), app.Service<UserRepository>(), app.Service<PasswordHasher>());
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => seed.ApplyAsync(default));
+
+        Assert.Equal("Seed usernames must differ.", error.Message);
+        Assert.Equal(beforeUsers, await CollectionSnapshotAsync(store, "users"));
+        Assert.Equal(beforeLogs, await CollectionSnapshotAsync(store, "logs"));
+    }
+    [Theory]
+    [InlineData("Admin", "Username", null)]
+    [InlineData("Admin", "Username", "ab")]
+    [InlineData("Admin", "Username", "<script>")]
+    [InlineData("User", "Username", null)]
+    [InlineData("User", "Username", "ab")]
+    [InlineData("User", "Username", "<script>")]
+    [InlineData("Admin", "Password", null)]
+    [InlineData("Admin", "Password", "short")]
+    [InlineData("User", "Password", null)]
+    [InlineData("User", "Password", "short")]
+    public async Task Invalid_seed_credentials_fail_before_any_database_write(string account, string field, string? value)
+    {
+        await using var app = new TestApplication();
+        var store = app.Service<MongoStore>();
+        var beforeUsers = await CollectionSnapshotAsync(store, "users");
+        var beforeLogs = await CollectionSnapshotAsync(store, "logs");
+        var settings = new Dictionary<string, string?>(app.Settings)
+        {
+            ["Seed:AdminUsername"] = "new.admin", ["Seed:UserUsername"] = "new.user",
+            [$"Seed:{account}{field}"] = value
+        };
+        var seed = new DevelopmentSeed(new ConfigurationBuilder().AddInMemoryCollection(settings).Build(),
+            app.Service<IWebHostEnvironment>(), app.Service<UserRepository>(), app.Service<PasswordHasher>());
+
+        if (field == "Username")
+        {
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => seed.ApplyAsync(default));
+            Assert.Equal($"Supply Seed__{account}Username.", error.Message);
+        }
+        else
+        {
+            var error = await Assert.ThrowsAsync<ApiException>(() => seed.ApplyAsync(default));
+            Assert.Equal(400, error.Status);
+            Assert.Equal(new[] { "Use 12–72 UTF-8 bytes." }, error.Errors["password"]);
+        }
+
+        Assert.Equal(beforeUsers, await CollectionSnapshotAsync(store, "users"));
+        Assert.Equal(beforeLogs, await CollectionSnapshotAsync(store, "logs"));
+    }
+    [Fact]
+    public async Task Preindex_username_collisions_fail_migration_visibly_and_retain_all_data_and_indexes()
+    {
+        await using var app = new TestApplication();
+        // Do not start TestApplication: its startup migration would create the unique index first.
+        var store = new MongoStore(new ConfigurationBuilder().AddInMemoryCollection(app.Settings).Build());
+        var records = new[]
+        {
+            new UserRecord { Username = "legacy.user", PasswordHash = "retained-first", City = "First" },
+            new UserRecord { Username = "legacy.user", PasswordHash = "retained-second", City = "Second" }
+        };
+        await store.Users.InsertManyAsync(records);
+        await store.Logs.InsertOneAsync(AuditEvent.Create(records[0].Id, "login", true));
+        var beforeUsers = await CollectionSnapshotAsync(store, "users");
+        var beforeLogs = await CollectionSnapshotAsync(store, "logs");
+        var beforeIndexes = await (await store.Users.Indexes.ListAsync()).ToListAsync();
+        Assert.Equal(2, beforeUsers.Length);
+        Assert.Equal("_id_", Assert.Single(beforeIndexes)["name"].AsString);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => new IndexMigration(store).ApplyAsync(default));
+
+        Assert.Equal("Resolve username collisions before applying the unique index.", error.Message);
+        Assert.Equal(beforeUsers, await CollectionSnapshotAsync(store, "users"));
+        Assert.Equal(beforeLogs, await CollectionSnapshotAsync(store, "logs"));
+        var afterIndexes = await (await store.Users.Indexes.ListAsync()).ToListAsync();
+        Assert.Equal(beforeIndexes.Select(x => x.ToJson()).ToArray(), afterIndexes.Select(x => x.ToJson()).ToArray());
+        Assert.DoesNotContain(afterIndexes, x => x["name"] == "username_unique_v1");
+    }
+    // Read complete persisted documents in stable order to detect inserts, updates and deletions.
+    private static async Task<string[]> CollectionSnapshotAsync(MongoStore store, string collection)
+    {
+        var documents = await store.Database.GetCollection<BsonDocument>(collection)
+            .Find(new BsonDocument()).Sort(new BsonDocument("_id", 1)).ToListAsync();
+        return documents.Select(x => x.ToJson()).ToArray();
     }
     [Fact]
     public async Task Transaction_commits_both_documents_and_rolls_back_on_failure()

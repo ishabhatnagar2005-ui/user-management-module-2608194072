@@ -22,9 +22,19 @@ test('Admin creates a safe account, revisits detail and duplicate failure preser
   await page.getByLabel('PAN identifier (optional)', { exact: true }).fill('SYNTHETIC-PAN');
   const createdResponse = page.waitForResponse(r => new URL(r.url()).pathname === '/api/users' && r.request().method() === 'POST');
   const detailResponse = page.waitForResponse(r => new URL(r.url()).pathname.startsWith('/api/users/') && r.request().method() === 'GET');
-  await page.getByRole('button', { name: 'Create account', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Creating account…' })).toBeDisabled();
-  const created = await createdResponse; expect(created.status()).toBe(201);
+  // Bound real network latency so the busy state is observable without replacing backend traffic.
+  const session = await page.context().newCDPSession(page);
+  let created: Awaited<typeof createdResponse>;
+  try {
+    await session.send('Network.enable');
+    await session.send('Network.emulateNetworkConditions', { offline: false, latency: 1000, downloadThroughput: -1, uploadThroughput: -1 });
+    await page.getByRole('button', { name: 'Create account', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Creating account…' })).toBeDisabled();
+    created = await createdResponse;
+  } finally {
+    await session.detach();
+  }
+  expect(created.status()).toBe(201);
   const account = await created.json() as UserView;
   expect(Object.keys(account).sort()).toEqual(['address', 'city', 'country', 'created_at', 'education', 'id', 'is_active', 'updated_at', 'username']);
   expect(account.username).toBe(username); expect(account.city).toBe('Synthetic journey city');

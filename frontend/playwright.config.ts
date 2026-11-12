@@ -16,8 +16,8 @@ export default defineConfig({
   ],
   webServer: [
     { command: `"${dotnet}" run --project ../backend/UserManagement.csproj --no-launch-profile`, url: `${backend}/api/health`,
-      env: { ASPNETCORE_ENVIRONMENT: 'Development', ASPNETCORE_URLS: backend }, reuseExistingServer: false, timeout: 90000 },
+      env: { ASPNETCORE_ENVIRONMENT: 'Development', ASPNETCORE_URLS: backend }, reuseExistingServer: process.env['E2E_REUSE_SERVER'] === 'true', timeout: 90000 },
     { command: `node node_modules/@angular/cli/bin/ng.js serve --host ${frontendAddress.hostname} --port ${frontendAddress.port || '80'}`,
-      url: frontend, env: { API_PROXY_TARGET: backend }, reuseExistingServer: false, timeout: 90000 }
+      url: frontend, env: { API_PROXY_TARGET: backend }, reuseExistingServer: process.env['E2E_REUSE_SERVER'] === 'true', timeout: 90000 }
   ]
 });
