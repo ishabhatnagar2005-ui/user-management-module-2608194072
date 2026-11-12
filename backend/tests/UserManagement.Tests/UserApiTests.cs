@@ -115,14 +115,16 @@ public sealed class UserApiTests
         Assert.Equal(1, await app.Service<MongoStore>().Logs.CountDocumentsAsync(x => x.Action == "user.read" && x.Status == "failure"));
     }
     // Race real HTTP writes then requery the single winner and both audit outcomes.
-    [Fact]
-    public async Task Concurrent_duplicate_HTTP_requests_have_one_201_and_one_409()
+    [Theory]
+    [InlineData(0)] [InlineData(1)] [InlineData(2)]
+    public async Task Concurrent_duplicate_HTTP_requests_have_one_201_and_one_409(int round)
     {
         await using var app = new TestApplication(); app.Settings["Mongo:TimeoutSeconds"] = "10"; using var client = app.CreateClient(); await SignIn(app, client);
-        var responses = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => client.PostAsJsonAsync("/api/users", new CreateUserRequest("race.http", app.Password))));
+        var username = "race.http." + round;
+        var responses = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => client.PostAsJsonAsync("/api/users", new CreateUserRequest(username, app.Password))));
         Assert.Equal(new[] { 201, 409 }, responses.Select(x => (int)x.StatusCode).Order().ToArray());
         await Error(responses.Single(x => x.StatusCode == HttpStatusCode.Conflict), HttpStatusCode.Conflict);
-        Assert.Equal(1, await app.Service<MongoStore>().Users.CountDocumentsAsync(x => x.Username == "race.http"));
+        Assert.Equal(1, await app.Service<MongoStore>().Users.CountDocumentsAsync(x => x.Username == username));
         Assert.Equal(1, await app.Service<MongoStore>().Logs.CountDocumentsAsync(x => x.Action == "user.create" && x.Status == "success"));
         Assert.Equal(1, await app.Service<MongoStore>().Logs.CountDocumentsAsync(x => x.Action == "user.create" && x.Status == "failure"));
     }

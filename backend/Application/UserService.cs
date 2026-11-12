@@ -28,14 +28,26 @@ public sealed class UserService(MongoStore store, UserRepository users, AuditRep
                 AadhaarIndex = request.AadhaarNo is { Length: > 0 } ? protector.BlindIndex("aadhaar_no", request.AadhaarNo) : null,
                 PanNo = request.PanNo is { Length: > 0 } ? protector.Protect("pan_no", request.PanNo) : null,
                 PanIndex = request.PanNo is { Length: > 0 } ? protector.BlindIndex("pan_no", request.PanNo) : null };
-            return await store.TransactionAsync(async (session, token) =>
+            for (var attempt = 0; ; attempt++)
             {
-                await users.InsertAsync(user, token, session);
-                await audit.RecordAsync(AuditEvent.Create(actor, "user.create", true), token, session);
-                return UserView.From(user);
-            }, ct);
+                try
+                {
+                    return await store.TransactionAsync(async (session, token) =>
+                    {
+                        validator.Validate(request);
+                        await users.InsertAsync(user, token, session);
+                        await audit.RecordAsync(AuditEvent.Create(actor, "user.create", true), token, session);
+                        return UserView.From(user);
+                    }, ct);
+                }
+                catch (MongoException error) when (error.HasErrorLabel("TransientTransactionError") && attempt < 3)
+                {
+                    // Retry only after TransactionAsync aborts, never an ambiguous commit.
+                    await Task.Delay(TimeSpan.FromMilliseconds(10 * (attempt + 1)), ct);
+                }
+            }
         }
-        catch (MongoWriteException error) when (error.WriteError.Category == ServerErrorCategory.DuplicateKey)
+        catch (Exception error) when (error is MongoWriteException { WriteError.Category: ServerErrorCategory.DuplicateKey } or MongoCommandException { Code: 11000 })
         {
             await audit.RecordAsync(AuditEvent.Create(actor, "user.create", false), ct);
             throw new ApiException(409, "username_conflict", "Username is already in use", new() { ["username"] = ["Choose another username."] });
