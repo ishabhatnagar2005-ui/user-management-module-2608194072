@@ -1,0 +1,98 @@
+/** Follow a real isolated User profile/password journey without mocks or repeated page navigation. */
+import { test, expect, signIn } from './fixtures';
+import { randomUUID } from 'node:crypto';
+import { UserView } from '../src/app/core/api.models';
+
+// Create a fresh ordinary account through the administrator UI so shared seed credentials stay unchanged.
+test('User edits only own details, changes password, signs out and signs in with the new credential', async ({ page }) => {
+  const username = `profile.${randomUUID().replace(/-/g, '')}`;
+  const originalPassword = `Synthetic-${randomUUID()}`;
+  const newPassword = `Replacement-${randomUUID()}`;
+  const profileWrites: string[] = [];
+  page.on('request', request => { if (new URL(request.url()).pathname.startsWith('/api/profile') && request.method() !== 'GET') profileWrites.push(request.method()); });
+  await page.goto('/');
+  await page.getByRole('main').getByRole('link', { name: 'Sign in', exact: true }).click();
+  await signIn(page, 'Admin');
+  await page.getByRole('navigation').getByRole('link', { name: 'New account', exact: true }).click();
+  await page.getByLabel('Username', { exact: true }).fill(username);
+  await page.getByLabel('Password', { exact: true }).fill(originalPassword);
+  await page.getByLabel('Address (optional)', { exact: true }).fill('Synthetic original address');
+  await page.getByLabel('City (optional)', { exact: true }).fill('Original city');
+  const creation = page.waitForResponse(r => new URL(r.url()).pathname === '/api/users' && r.request().method() === 'POST');
+  const detail = page.waitForResponse(r => new URL(r.url()).pathname.startsWith('/api/users/') && r.request().method() === 'GET');
+  await page.getByRole('button', { name: 'Create account', exact: true }).click();
+  const createdResponse = await creation; expect(createdResponse.status()).toBe(201);
+  const created = await createdResponse.json() as UserView;
+  const detailResponse = await detail; expect(detailResponse.status()).toBe(200); expect(await detailResponse.json()).toEqual(created);
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page).toHaveURL('/login');
+  /** Use the native login page and require a genuine backend-issued User token. */
+  async function loginWith(password: string): Promise<string> {
+    await page.getByLabel('Username', { exact: true }).fill(username);
+    await page.getByLabel('Password', { exact: true }).fill(password);
+    const loginResponse = page.waitForResponse(r => new URL(r.url()).pathname === '/api/login' && r.request().method() === 'POST');
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    const response = await loginResponse; expect(response.status()).toBe(200);
+    const body = await response.json() as { accessToken: string; tokenType: string; expiresAt: string };
+    expect(body.tokenType).toBe('Bearer'); expect(body.accessToken.split('.')).toHaveLength(3);
+    const claims = JSON.parse(Buffer.from(body.accessToken.split('.')[1], 'base64url').toString('utf8')) as { role: string; sub: string; cv: string };
+    expect(claims.role).toBe('User'); expect(claims.sub).toBe(created.id);
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible();
+    return body.accessToken;
+  }
+  const oldToken = await loginWith(originalPassword);
+  await expect(page.getByRole('navigation').getByRole('link', { name: 'Directory', exact: true })).toHaveCount(0);
+  const readProfile = page.waitForResponse(r => new URL(r.url()).pathname === '/api/profile' && r.request().method() === 'GET');
+  await page.getByRole('navigation').getByRole('link', { name: 'My profile', exact: true }).click();
+  const profileResponse = await readProfile; expect(profileResponse.status()).toBe(200); expect(await profileResponse.json()).toEqual(created);
+  await expect(page).toHaveURL('/profile'); await expect(page.getByRole('heading', { name: 'My profile', exact: true })).toBeVisible();
+  await expect(page.getByRole('main')).toContainText(username);
+  await expect(page.getByLabel('Address (optional)', { exact: true })).toHaveValue('Synthetic original address');
+  await expect(page.getByLabel('Username', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('PAN identifier (optional)', { exact: true })).toHaveCount(0);
+  expect(profileWrites).toEqual([]);
+  await page.getByLabel('Address (optional)', { exact: true }).fill('Synthetic updated address');
+  await page.getByLabel('City (optional)', { exact: true }).fill('Updated city');
+  await page.getByLabel('Country (optional)', { exact: true }).fill('Synthetic country');
+  await page.getByLabel('Education (optional)', { exact: true }).fill('Synthetic education');
+  const updateProfile = page.waitForResponse(r => new URL(r.url()).pathname === '/api/profile' && r.request().method() === 'PUT');
+  await page.getByRole('button', { name: 'Save profile', exact: true }).click();
+  const updateResponse = await updateProfile; expect(updateResponse.status()).toBe(200);
+  expect(Object.keys(updateResponse.request().postDataJSON() as Record<string, unknown>).sort()).toEqual(['address', 'city', 'country', 'education']);
+  const updated = await updateResponse.json() as UserView;
+  expect(updated.id).toBe(created.id); expect(updated.username).toBe(username); expect(updated.created_at).toBe(created.created_at);
+  expect(updated.address).toBe('Synthetic updated address'); expect(updated.city).toBe('Updated city'); expect(updated.country).toBe('Synthetic country'); expect(updated.education).toBe('Synthetic education'); expect(Date.parse(updated.updated_at)).toBeGreaterThan(Date.parse(created.updated_at));
+  await expect(page.getByRole('main')).toContainText('Profile updated successfully.');
+  await page.getByRole('navigation').getByRole('link', { name: 'Home', exact: true }).click();
+  const persistedRead = page.waitForResponse(r => new URL(r.url()).pathname === '/api/profile' && r.request().method() === 'GET');
+  await page.getByRole('navigation').getByRole('link', { name: 'My profile', exact: true }).click();
+  const persisted = await persistedRead; expect(persisted.status()).toBe(200); expect(await persisted.json()).toEqual(updated);
+  await expect(page.getByLabel('City (optional)', { exact: true })).toHaveValue('Updated city'); expect(profileWrites).toEqual(['PUT']);
+  await page.getByLabel('Current password', { exact: true }).fill(originalPassword);
+  await page.getByLabel('New password', { exact: true }).fill(newPassword);
+  const passwordChange = page.waitForResponse(r => new URL(r.url()).pathname === '/api/profile/password' && r.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Change password', exact: true }).click();
+  const changeResponse = await passwordChange; expect(changeResponse.status()).toBe(204); expect(await changeResponse.text()).toBe('');
+  await expect(page).toHaveURL('/login'); await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('navigation').getByRole('link', { name: 'My profile', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('main')).toContainText('Password changed successfully. Sign in with your new password.');
+  // Direct real backend proof of revocation does not inject state or mock browser requests.
+  const oldSession = await page.request.get('/api/profile', { headers: { Authorization: `Bearer ${oldToken}` } }); expect(oldSession.status()).toBe(401);
+  const oldLogin = await page.request.post('/api/login', { data: { username, password: originalPassword } }); expect(oldLogin.status()).toBe(401);
+  const newToken = await loginWith(newPassword); expect(newToken).not.toBe(oldToken);
+  const changedClaims = JSON.parse(Buffer.from(newToken.split('.')[1], 'base64url').toString('utf8')) as { cv: string };
+  const oldClaims = JSON.parse(Buffer.from(oldToken.split('.')[1], 'base64url').toString('utf8')) as { cv: string };
+  expect(Number(changedClaims.cv)).toBe(Number(oldClaims.cv) + 1);
+  const finalRead = page.waitForResponse(r => new URL(r.url()).pathname === '/api/profile' && r.request().method() === 'GET');
+  await page.getByRole('navigation').getByRole('link', { name: 'My profile', exact: true }).click();
+  const finalResponse = await finalRead; expect(finalResponse.status()).toBe(200); const finalProfile = await finalResponse.json() as UserView;
+  expect({ ...finalProfile, updated_at: updated.updated_at }).toEqual(updated); expect(Date.parse(finalProfile.updated_at)).toBeGreaterThan(Date.parse(updated.updated_at));
+  await expect(page.getByLabel('Address (optional)', { exact: true })).toHaveValue(updated.address!);
+  await expect(page.getByLabel('Country (optional)', { exact: true })).toHaveValue(updated.country!);
+  await expect(page.getByLabel('Education (optional)', { exact: true })).toHaveValue(updated.education!);
+  await expect(page.getByLabel('Current password', { exact: true })).toHaveValue(''); await expect(page.getByLabel('New password', { exact: true })).toHaveValue('');
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click(); await expect(page).toHaveURL('/login');
+  await expect(page.getByRole('main')).toContainText('You have signed out.');
+  await loginWith(newPassword); expect(profileWrites).toEqual(['PUT', 'POST']);
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+});

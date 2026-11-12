@@ -21,3 +21,8 @@ export interface DirectoryPage { items: UserView[]; limit: number; skip: number;
 
 /** Permit only directory patch fields; absent identifiers remain unchanged. */
 export type UpdateUserRequest = Partial<Omit<CreateUserRequest, 'password'>>;
+
+/** Permit only own-profile details; target identity and credentials cannot be submitted here. */
+export type ProfileUpdateRequest = Pick<UserView, 'address' | 'city' | 'country' | 'education'>;
+/** Carry secrets only in the explicit password change request. */
+export interface PasswordChangeRequest { currentPassword: string; newPassword: string; }

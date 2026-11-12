@@ -40,6 +40,8 @@ export class AuthService {
   }
   /** End the local session without implying server-side token revocation. */
   logout(): void { this.clear(); this.notifications.show('You have signed out.'); void this.router.navigate(['/login']); }
+  /** End all local account state after the server invalidates existing credentials. */
+  passwordChanged(): void { this.clear(); this.notifications.show('Password changed successfully. Sign in with your new password.'); void this.router.navigate(['/login']); }
   /** Clear an expired/rejected session and announce why sign-in is needed. */
   expire(): void { this.clear(); this.notifications.show('Your session ended. Sign in again.'); void this.router.navigate(['/login']); }
 }

@@ -1,0 +1,51 @@
+<section class="profile-page" aria-labelledby="profile-title">
+  <p class="eyebrow">Your account</p>
+  <h1 id="profile-title">My profile</h1>
+  <p class="muted">Edit your account details. Your username and account permissions are managed by your organization.</p>
+  @if (loading()) { <p role="status" aria-live="polite">Loading profile…</p> }
+  @if (loadError()) {
+    <p class="alert-error" role="alert">{{ loadError() }}</p>
+    <button class="button secondary" type="button" (click)="load()">Retry loading profile</button>
+  }
+  @if (user(); as account) {
+    <p>Username: <strong>{{ account.username }}</strong></p>
+    <form [formGroup]="form" (ngSubmit)="save()" novalidate [attr.aria-busy]="saving()">
+      <fieldset [disabled]="saving() || changingPassword()" style="border: 0; padding: 0; margin: 0; min-width: 0;">
+        <legend class="muted">Profile details</legend>
+        @for (field of fields; track field.name) {
+          <div class="field">
+            <label [for]="field.name">{{ field.label }}</label>
+            <input [id]="field.name" [formControlName]="field.name" [attr.autocomplete]="field.autocomplete"
+              [attr.aria-invalid]="invalid(field.name)" [attr.aria-describedby]="field.name + (invalid(field.name) ? '-error' : '-help')">
+            <p [id]="field.name + '-help'" class="help">Up to {{ field.maximum }} characters, without control characters.</p>
+            @if (invalid(field.name)) { <p [id]="field.name + '-error'" class="field-error" role="alert">Use at most {{ field.maximum }} characters without control characters.</p> }
+          </div>
+        }
+        @if (error()) { <p class="alert-error" role="alert">{{ error() }}</p> }
+        <button class="button primary" type="submit" [disabled]="saving() || changingPassword()">{{ saving() ? 'Saving profile…' : 'Save profile' }}</button>
+      </fieldset>
+      <p class="status" role="status" aria-live="polite">{{ saving() ? 'Saving profile securely…' : success() }}</p>
+    </form>
+    <section class="password-section" aria-labelledby="password-title">
+      <h2 id="password-title">Change password</h2>
+      <p class="muted">Confirm your current password. Changing it ends existing sessions; sign in again with your new password.</p>
+      <form [formGroup]="passwordForm" (ngSubmit)="changePassword()" novalidate [attr.aria-busy]="changingPassword()">
+        <fieldset [disabled]="saving() || changingPassword()" style="border: 0; padding: 0; margin: 0; min-width: 0;">
+          <legend class="muted">Password verification</legend>
+          @for (field of passwordFields; track field.name) {
+            <div class="field">
+              <label [for]="field.name">{{ field.label }}</label>
+              <input [id]="field.name" [formControlName]="field.name" type="password" [attr.autocomplete]="field.autocomplete" aria-required="true"
+                [attr.aria-invalid]="invalid(field.name, true)" [attr.aria-describedby]="field.name + (invalid(field.name, true) ? '-error' : '-help')">
+              <p [id]="field.name + '-help'" class="help">Use 12–72 UTF-8 bytes. You can paste your password.</p>
+              @if (invalid(field.name, true)) { <p [id]="field.name + '-error'" class="field-error" role="alert">Enter a password within the required byte range.</p> }
+            </div>
+          }
+          @if (passwordError()) { <p class="alert-error" role="alert">{{ passwordError() }}</p> }
+          <button class="button secondary" type="submit" [disabled]="saving() || changingPassword()">{{ changingPassword() ? 'Changing password…' : 'Change password' }}</button>
+        </fieldset>
+        <p class="status" role="status" aria-live="polite">{{ changingPassword() ? 'Verifying and changing password securely…' : '' }}</p>
+      </form>
+    </section>
+  }
+</section>

@@ -23,6 +23,13 @@ public sealed class UserRepository(MongoStore store)
     // Persist validated update operators and return the post-write document.
     public Task<UserRecord> UpdateAsync(FilterDefinition<UserRecord> filter, UpdateDefinition<UserRecord> update, IClientSessionHandle session, CancellationToken ct) =>
         store.Users.FindOneAndUpdateAsync(session, filter, update, new FindOneAndUpdateOptions<UserRecord> { ReturnDocument = ReturnDocument.After }, ct);
+    // Prevent stale credentials or a concurrently deactivated account from accepting a profile write.
+    // Returns: The updated record, or null when the active credential snapshot no longer matches.
+    public Task<UserRecord?> UpdateCredentialConditionalAsync(ObjectId id, long version, UpdateDefinition<UserRecord> update,
+        IClientSessionHandle session, CancellationToken ct) => store.Users.FindOneAndUpdateAsync<UserRecord?>(session,
+            Builders<UserRecord>.Filter.Eq(x => x.Id, id) & Builders<UserRecord>.Filter.Eq(x => x.IsActive, true) &
+            Builders<UserRecord>.Filter.Eq(x => x.CredentialVersion, version), update,
+            new FindOneAndUpdateOptions<UserRecord, UserRecord?> { ReturnDocument = ReturnDocument.After }, ct);
     // Query within explicit bounds and stable server-side ordering.
     public Task<List<UserRecord>> QueryAsync(FilterDefinition<UserRecord> filter, SortDefinition<UserRecord> sort, int limit, int skip, CancellationToken ct)
     {

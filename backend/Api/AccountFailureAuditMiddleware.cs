@@ -14,6 +14,8 @@ public sealed class AccountFailureAuditMiddleware(RequestDelegate next)
         var path = context.Request.Path.Value ?? "";
         var action = context.Request.Method == "POST" && path.TrimEnd('/') == "/api/users" ? "user.create" :
             context.Request.Method is "GET" or "PUT" or "DELETE" && path.StartsWith("/api/users/", StringComparison.Ordinal) && path[11..].TrimEnd('/').IndexOf('/') < 0 ? context.Request.Method switch { "PUT" => "user.update", "DELETE" => "user.deactivate", _ => "user.read" } : null;
+        if (context.Request.Method == "PUT" && path.TrimEnd('/') == "/api/profile") action = "profile.update";
+        if (context.Request.Method == "POST" && path.TrimEnd('/') == "/api/profile/password") action = "password.change";
         if (action is null) { await next(context); return; }
         // Buffer this small account response so audit failure can still produce a controlled 503.
         var original = context.Response.Body;

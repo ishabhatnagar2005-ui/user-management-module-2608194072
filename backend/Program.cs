@@ -26,6 +26,7 @@ builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
 builder.Services.AddSingleton<UserValidator>();
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<DirectoryService>();
+builder.Services.AddScoped<ProfileService>();
 builder.Services.AddControllers().AddJsonOptions(o => o.JsonSerializerOptions.UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow);
 builder.Services.Configure<ApiBehaviorOptions>(o => o.InvalidModelStateResponseFactory = context =>
     new BadRequestObjectResult(new ApiError("validation_error", "Request validation failed", 400,

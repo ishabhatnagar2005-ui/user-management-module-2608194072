@@ -1,6 +1,6 @@
 /** Keep one routing authority and reference only implemented slice components. */
 import { Routes } from '@angular/router';
-import { adminGuard } from './auth/auth.service';
+import { adminGuard, authGuard } from './auth/auth.service';
 export const routes: Routes = [
   { path: '', title: 'User management', loadComponent: () => import('./home/home.component').then(m => m.HomeComponent) },
   { path: 'login', title: 'Sign in · User management', loadComponent: () => import('./auth/login.component').then(m => m.LoginComponent) },
@@ -9,5 +9,6 @@ export const routes: Routes = [
   { path: 'users/new', title: 'New account · User management', canActivate: [adminGuard], loadComponent: () => import('./users/user-form.component').then(m => m.UserFormComponent) },
   { path: 'users/:id/edit', title: 'Edit account · User management', canActivate: [adminGuard], loadComponent: () => import('./users/user-form.component').then(m => m.UserFormComponent) },
   { path: 'users/:id', title: 'Account details · User management', canActivate: [adminGuard], loadComponent: () => import('./users/user-detail.component').then(m => m.UserDetailComponent) },
+  { path: 'profile', title: 'My profile · User management', canActivate: [authGuard], loadComponent: () => import('./profile/profile.component').then(m => m.ProfileComponent) },
   { path: '**', redirectTo: '' }
 ];
