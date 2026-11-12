@@ -3,8 +3,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
 using UserManagement.Application;
-using UserManagement.Audit;
-using UserManagement.Domain;
 namespace UserManagement.Api;
 // Delegate validation and transactional persistence to the application layer.
 [ApiController, Route("api/users"), Authorize(Policy = "Admin")]
@@ -25,42 +23,18 @@ public sealed class UserController(UserService users) : ControllerBase
         HttpContext.Items[AccountFailureAuditMiddleware.Handled] = true;
         return Ok(await users.ReadAsync(id, ObjectId.Parse(User.FindFirst("sub")!.Value), ct));
     }
-}
-// Record account failures that happen before MVC reaches the service, including JSON and role denial.
-public sealed class AccountFailureAuditMiddleware(RequestDelegate next)
-{
-    public const string Handled = "account-service-audit";
-    // Wrap only create/read paths; preserve authentication behavior on every other route.
-    // Notes: Unknown actors are omitted; a unavailable audit never becomes a successful response.
-    public async Task InvokeAsync(HttpContext context, AuditRepository audit)
+    // Apply only the approved patch in an audited transaction.
+    [HttpPut("{id}")]
+    public async Task<ActionResult<UserView>> Update(string id, [FromBody] UpdateUserRequest request, CancellationToken ct)
     {
-        var path = context.Request.Path.Value ?? "";
-        var action = context.Request.Method == "POST" && path.TrimEnd('/') == "/api/users" ? "user.create" :
-            context.Request.Method == "GET" && path.StartsWith("/api/users/", StringComparison.Ordinal) && path[11..].TrimEnd('/').IndexOf('/') < 0 ? "user.read" : null;
-        if (action is null) { await next(context); return; }
-        // Buffer this small account response so audit failure can still produce a controlled 503.
-        var original = context.Response.Body;
-        await using var buffer = new MemoryStream();
-        context.Response.Body = buffer;
-        try
-        {
-            try { await next(context); }
-            catch
-            {
-                if (!context.Items.ContainsKey(Handled)) await RecordFailureAsync(context, audit, action);
-                throw;
-            }
-            if (!context.Items.ContainsKey(Handled) && context.Response.StatusCode >= 400)
-                await RecordFailureAsync(context, audit, action);
-            buffer.Position = 0;
-            await buffer.CopyToAsync(original, context.RequestAborted);
-        }
-        finally { context.Response.Body = original; }
+        HttpContext.Items[AccountFailureAuditMiddleware.Handled] = true;
+        return Ok(await users.UpdateAsync(id, request, ObjectId.Parse(User.FindFirst("sub")!.Value), ct));
     }
-    // Omit unverified identity and persist only the approved failure vocabulary.
-    private static Task RecordFailureAsync(HttpContext context, AuditRepository audit, string action)
+    // Retain the account document and deactivate only on explicit DELETE.
+    [HttpDelete("{id}")]
+    public async Task<ActionResult<UserView>> Deactivate(string id, CancellationToken ct)
     {
-        ObjectId? actor = context.User.Identity?.IsAuthenticated == true && ObjectId.TryParse(context.User.FindFirst("sub")?.Value, out var id) ? id : null;
-        return audit.RecordAsync(AuditEvent.Create(actor, action, false), context.RequestAborted);
+        HttpContext.Items[AccountFailureAuditMiddleware.Handled] = true;
+        return Ok(await users.DeactivateAsync(id, ObjectId.Parse(User.FindFirst("sub")!.Value), ct));
     }
 }

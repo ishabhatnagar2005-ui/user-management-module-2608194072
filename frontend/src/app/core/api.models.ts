@@ -18,3 +18,6 @@ export interface DirectoryQuery {
 }
 /** Return only safe records and the requested offset window. */
 export interface DirectoryPage { items: UserView[]; limit: number; skip: number; }
+
+/** Permit only directory patch fields; absent identifiers remain unchanged. */
+export type UpdateUserRequest = Partial<Omit<CreateUserRequest, 'password'>>;

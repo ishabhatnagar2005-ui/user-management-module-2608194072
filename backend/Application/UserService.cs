@@ -1,4 +1,4 @@
-// Coordinate safe account creation and reads with redacted durable outcomes.
+// Coordinate safe account management with redacted durable outcomes.
 using MongoDB.Bson;
 using MongoDB.Driver;
 using UserManagement.Api;
@@ -7,7 +7,7 @@ using UserManagement.Domain;
 using UserManagement.Infrastructure;
 using UserManagement.Security;
 namespace UserManagement.Application;
-// Execute only the approved create/read account use cases.
+// Execute approved account use cases with transactional mutation auditing.
 public sealed class UserService(MongoStore store, UserRepository users, AuditRepository audit, UserValidator validator,
     PasswordHasher hasher, IdentifierProtector protector, TimeProvider clock)
 {
@@ -60,6 +60,78 @@ public sealed class UserService(MongoStore store, UserRepository users, AuditRep
         catch
         {
             await audit.RecordAsync(AuditEvent.Create(actor, "user.read", false), ct);
+            throw;
+        }
+    }
+    // Update a validated effective record with one write, preserving all untouched storage fields.
+    public Task<UserView> UpdateAsync(string id, UpdateUserRequest patch, ObjectId actor, CancellationToken ct) =>
+        MutateAsync(id, patch, actor, "user.update", ct);
+    // Soft-deactivate without removing data or providing a reactivation path.
+    public Task<UserView> DeactivateAsync(string id, ObjectId actor, CancellationToken ct) =>
+        MutateAsync(id, null, actor, "user.deactivate", ct);
+    // Read/validate/write/audit within the same snapshot; retry only aborted transient transactions.
+    // Raises: Safe missing/validation/conflict errors; unavailable dependencies never use memory fallback.
+    private async Task<UserView> MutateAsync(string id, UpdateUserRequest? patch, ObjectId actor, string action, CancellationToken ct)
+    {
+        try
+        {
+            var parsed = validator.ParseId(id);
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    return await store.TransactionAsync(async (session, token) =>
+                    {
+                        var current = await users.FindByIdAsync(parsed, token, session);
+                        if (current is null) throw new ApiException(404, "account_not_found", "Account was not found");
+                        var now = clock.GetUtcNow().UtcDateTime;
+                        now = new DateTime(now.Ticks - now.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
+                        if (now <= current.UpdatedAt) now = current.UpdatedAt.AddMilliseconds(1);
+                        var u = Builders<UserRecord>.Update;
+                        UpdateDefinition<UserRecord> update = u.Set(x => x.UpdatedAt, now);
+                        if (patch is null) update = update.Set(x => x.IsActive, false);
+                        else
+                        {
+                            var values = validator.Effective(patch, current, protector);
+                            foreach (var (field, value) in values)
+                            {
+                                if (field is "aadhaar_no" or "pan_no")
+                                {
+                                    var supplied = field == "aadhaar_no" ? patch.AadhaarNo : patch.PanNo;
+                                    if (supplied.ValueKind == System.Text.Json.JsonValueKind.Undefined) continue;
+                                    var index = field == "aadhaar_no" ? "aadhaar_index" : "pan_index";
+                                    update = string.IsNullOrEmpty(value) ? update.Unset(field).Unset(index) :
+                                        update.Set(field, protector.Protect(field, value)).Set(index, protector.BlindIndex(field, value));
+                                }
+                                else
+                                {
+                                    var supplied = field switch { "username" => patch.Username, "address" => patch.Address,
+                                        "city" => patch.City, "country" => patch.Country, _ => patch.Education };
+                                    if (supplied.ValueKind != System.Text.Json.JsonValueKind.Undefined)
+                                        update = value is null ? update.Unset(field) : update.Set(field, value);
+                                }
+                            }
+                        }
+                        var result = await users.UpdateAsync(Builders<UserRecord>.Filter.Eq(x => x.Id, parsed), update, session, token);
+                        await audit.RecordAsync(AuditEvent.Create(actor, action, true), token, session);
+                        return UserView.From(result);
+                    }, ct);
+                }
+                catch (MongoException error) when (error.HasErrorLabel("TransientTransactionError") && attempt < 3)
+                {
+                    // The transaction was aborted; a fresh snapshot must be merged before retry.
+                    await Task.Delay(TimeSpan.FromMilliseconds(10 * (attempt + 1)), ct);
+                }
+            }
+        }
+        catch (Exception error) when (error is MongoWriteException { WriteError.Category: ServerErrorCategory.DuplicateKey } or MongoCommandException { Code: 11000 })
+        {
+            await audit.RecordAsync(AuditEvent.Create(actor, action, false), ct);
+            throw new ApiException(409, "username_conflict", "Username is already in use", new() { ["username"] = ["Choose another username."] });
+        }
+        catch
+        {
+            await audit.RecordAsync(AuditEvent.Create(actor, action, false), ct);
             throw;
         }
     }

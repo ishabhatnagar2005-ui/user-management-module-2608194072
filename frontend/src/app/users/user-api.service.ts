@@ -3,7 +3,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { CreateUserRequest, UserView, DirectoryPage, DirectoryQuery } from '../core/api.models';
+import { CreateUserRequest, UpdateUserRequest, UserView, DirectoryPage, DirectoryQuery } from '../core/api.models';
 /** Delegate authorization to the existing interceptor and authoritative backend. */
 @Injectable({ providedIn: 'root' })
 export class UserApiService {
@@ -11,6 +11,10 @@ export class UserApiService {
   constructor(private readonly http: HttpClient) {}
   /** Create an account only when an explicit form submission calls this method. */
   create(request: CreateUserRequest): Observable<UserView> { return this.http.post<UserView>(`${environment.apiBaseUrl}/users`, request); }
+  /** Apply an explicit allowlisted patch through the authoritative transaction. */
+  update(id: string, request: UpdateUserRequest): Observable<UserView> { return this.http.put<UserView>(`${environment.apiBaseUrl}/users/${encodeURIComponent(id)}`, request); }
+  /** Soft-deactivate only after the detail confirmation action. */
+  deactivate(id: string): Observable<UserView> { return this.http.delete<UserView>(`${environment.apiBaseUrl}/users/${encodeURIComponent(id)}`); }
   /** Serialize each approved directory value once, omitting empty optional filters. */
   list(query: DirectoryQuery): Observable<DirectoryPage> {
     let params = new HttpParams();

@@ -117,7 +117,7 @@ describe('Account detail reads', () => {
     const request = http.expectOne('/api/users/000000000000000000000001'); expect(request.request.method).toBe('GET'); request.flush(account()); fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('synthetic.user'); expect(fixture.nativeElement.textContent).toContain('Synthetic city');
     expect(fixture.nativeElement.textContent).toContain('Not provided'); expect(fixture.nativeElement.textContent).toContain('Active');
-    expect(fixture.nativeElement.querySelector('input')).toBeNull(); expect(fixture.nativeElement.querySelector('button')).toBeNull();
+    expect(fixture.nativeElement.querySelector('input')).toBeNull(); expect(fixture.nativeElement.querySelector('button').textContent).toContain('Deactivate'); expect(fixture.nativeElement.querySelector('dialog').open).toBeFalse();
     http.expectNone(r => r.method !== 'GET');
   });
   for (const status of [400, 401, 403, 404, 503, 0]) {
