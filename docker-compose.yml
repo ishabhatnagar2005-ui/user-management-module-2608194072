@@ -1,0 +1,48 @@
+# Local development only: single-node replica set, no exposed Mongo port or production credentials.
+services:
+  mongo:
+    image: mongo:8.0.16
+    command: ["mongod", "--replSet", "umrs", "--bind_ip_all", "--port", "27017"]
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "quit(db.adminCommand({ping:1}).ok ? 0 : 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  mongo-init:
+    image: mongo:8.0.16
+    depends_on:
+      mongo:
+        condition: service_healthy
+    entrypoint: ["bash", "-ec"]
+    command:
+      - >-
+        mongosh --host mongo --quiet --eval 'try { rs.status(); } catch(e) { if (e.code === 94) rs.initiate({_id:"umrs",members:[{_id:0,host:"mongo:27017"}]}); else throw e; }';
+        for i in $$(seq 1 60); do mongosh --host mongo --quiet --eval 'quit(db.hello().isWritablePrimary ? 0 : 1)' && exit 0; sleep 1; done; exit 1
+  backend:
+    build: ./backend
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://0.0.0.0:8080
+      Mongo__Uri: mongodb://mongo:27017/?replicaSet=umrs
+      Mongo__Database: user_management_compose
+    volumes:
+      - type: bind
+        source: ./backend/appsettings.Development.json
+        target: /app/appsettings.Development.json
+        read_only: true
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+  frontend:
+    build: ./frontend
+    environment:
+      BACKEND_ORIGIN: http://backend:8080
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - backend
+volumes:
+  mongo_data:
