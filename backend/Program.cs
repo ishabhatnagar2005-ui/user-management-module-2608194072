@@ -23,6 +23,8 @@ builder.Services.AddSingleton<AuditRepository>();
 builder.Services.AddSingleton<IndexMigration>();
 builder.Services.AddSingleton<DevelopmentSeed>();
 builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
+builder.Services.AddSingleton<UserValidator>();
+builder.Services.AddScoped<UserService>();
 builder.Services.AddControllers().AddJsonOptions(o => o.JsonSerializerOptions.UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow);
 builder.Services.Configure<ApiBehaviorOptions>(o => o.InvalidModelStateResponseFactory = context =>
     new BadRequestObjectResult(new ApiError("validation_error", "Request validation failed", 400,
@@ -57,6 +59,7 @@ builder.Services.AddAuthorization(o =>
 var app = builder.Build();
 app.UseMiddleware<ErrorMiddleware>();
 app.UseCors("client");
+app.UseMiddleware<AccountFailureAuditMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
